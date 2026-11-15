@@ -4,18 +4,18 @@
 #include <Keypad.h>
 #include <LiquidCrystal_I2C.h>
 
-// ==================================
+// =====================================
 // LCD CONFIGURATION
-// ==================================
+// =====================================
 
 #define SDA_PIN 22
 #define SCL_PIN 21
 
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 
-// ==================================
+// =====================================
 // KEYPAD CONFIGURATION
-// ==================================
+// =====================================
 
 const byte ROWS = 4;
 const byte COLS = 4;
@@ -38,15 +38,17 @@ Keypad keypad = Keypad(
   COLS
 );
 
-// ==================================
-// MOTOR 1 CONFIGURATION
-// ==================================
+// =====================================
+// MOTOR CONFIGURATION
+// =====================================
 
-// ULN2003 Driver 1
-// Revised pins for ESP32-WROOM-32
+// Motor 1 - ULN2003 Driver 1
 const int motor1Pins[4] = {18, 19, 16, 17};
 
-// Half-step sequence from Day 1
+// Motor 2 - ULN2003 Driver 2
+const int motor2Pins[4] = {25, 26, 27, 32};
+
+// Half-step sequence
 const byte steps[8][4] = {
   {1, 0, 0, 0},
   {1, 1, 0, 0},
@@ -59,12 +61,13 @@ const byte steps[8][4] = {
 };
 
 int position1 = 0;
+int position2 = 0;
 
 const int stepsToRotate = 1024;
 
-// ==================================
+// =====================================
 // PIN AUTHENTICATION
-// ==================================
+// =====================================
 
 const char* validPins[] = {
   "1234", "5678", "2468", "1357"
@@ -75,6 +78,7 @@ const int pinCount = 4;
 String enteredPin = "";
 bool pinVerified = false;
 
+// Check entered PIN
 bool checkPin(String pin) {
   for (int i = 0; i < pinCount; i++) {
     if (pin == validPins[i]) {
@@ -84,18 +88,18 @@ bool checkPin(String pin) {
   return false;
 }
 
-// ==================================
-// MOTOR CONTROL FUNCTIONS
-// ==================================
+// =====================================
+// MOTOR FUNCTIONS
+// =====================================
 
-// Turn off all motor coils
+// Release motor coils
 void releaseMotor(const int pins[4]) {
   for (int i = 0; i < 4; i++) {
     digitalWrite(pins[i], LOW);
   }
 }
 
-// Rotate Motor 1
+// Rotate selected motor
 void rotateMotor(
   const int pins[4],
   int &position
@@ -114,9 +118,9 @@ void rotateMotor(
   releaseMotor(pins);
 }
 
-// ==================================
+// =====================================
 // LCD FUNCTIONS
-// ==================================
+// =====================================
 
 void showWelcome() {
   lcd.clear();
@@ -134,23 +138,34 @@ void resetMachine() {
   Serial.println("ENTER 4-DIGIT PIN:");
 }
 
-// ==================================
+// =====================================
 // DISPENSING FUNCTION
-// ==================================
+// =====================================
 
-void dispenseMotor1() {
+void dispense(int product) {
 
   lcd.clear();
   lcd.setCursor(0, 0);
   lcd.print("DISPENSING...");
   lcd.setCursor(0, 1);
-  lcd.print("PRODUCT 1");
+  lcd.print("PRODUCT ");
+  lcd.print(product);
 
-  Serial.println("Motor 1 rotating...");
+  Serial.print("Dispensing Product ");
+  Serial.println(product);
 
-  rotateMotor(motor1Pins, position1);
+  if (product == 1) {
 
-  Serial.println("Motor 1 stopped.");
+    Serial.println("Motor 1 rotating...");
+    rotateMotor(motor1Pins, position1);
+
+  } else if (product == 2) {
+
+    Serial.println("Motor 2 rotating...");
+    rotateMotor(motor2Pins, position2);
+  }
+
+  Serial.println("Motor cycle completed.");
 
   lcd.clear();
   lcd.setCursor(0, 0);
@@ -163,32 +178,35 @@ void dispenseMotor1() {
   resetMachine();
 }
 
-// ==================================
+// =====================================
 // SETUP
-// ==================================
+// =====================================
 
 void setup() {
+
   Serial.begin(115200);
 
-  // Initialize LCD
+  // LCD initialization
   Wire.begin(SDA_PIN, SCL_PIN);
 
   lcd.init();
   lcd.backlight();
 
-  // Initialize Motor 1
+  // Initialize both motors
   for (int i = 0; i < 4; i++) {
     pinMode(motor1Pins[i], OUTPUT);
+    pinMode(motor2Pins[i], OUTPUT);
   }
 
   releaseMotor(motor1Pins);
+  releaseMotor(motor2Pins);
 
   resetMachine();
 }
 
-// ==================================
+// =====================================
 // MAIN LOOP
-// ==================================
+// =====================================
 
 void loop() {
 
@@ -196,13 +214,13 @@ void loop() {
 
   if (!key) return;
 
-  // Clear / Logout
+  // * = Reset / Logout
   if (key == '*') {
     resetMachine();
     return;
   }
 
-  // PIN not verified yet
+  // Authentication stage
   if (!pinVerified) {
 
     if (key >= '0' && key <= '9') {
@@ -229,10 +247,10 @@ void loop() {
         lcd.setCursor(0, 0);
         lcd.print("PIN VERIFIED");
         lcd.setCursor(0, 1);
-        lcd.print("PRESS 1 FOR ITEM");
+        lcd.print("SELECT 1 OR 2");
 
         Serial.println("ACCESS GRANTED");
-        Serial.println("Press 1 for Product 1");
+        Serial.println("Select Product 1 or 2");
 
       } else {
 
@@ -250,12 +268,17 @@ void loop() {
     }
   }
 
-  // PIN verified
+  // After successful authentication
   else {
 
     if (key == '1') {
-      dispenseMotor1();
-    }
 
+      dispense(1);
+
+    } else if (key == '2') {
+
+      dispense(2);
+
+    }
   }
 }
