@@ -42,13 +42,9 @@ Keypad keypad = Keypad(
 // MOTOR CONFIGURATION
 // =====================================
 
-// Motor 1 - ULN2003 Driver 1
 const int motor1Pins[4] = {18, 19, 16, 17};
-
-// Motor 2 - ULN2003 Driver 2
 const int motor2Pins[4] = {25, 26, 27, 32};
 
-// Half-step sequence
 const byte steps[8][4] = {
   {1, 0, 0, 0},
   {1, 1, 0, 0},
@@ -78,13 +74,38 @@ const int pinCount = 4;
 String enteredPin = "";
 bool pinVerified = false;
 
-// Check entered PIN
+// =====================================
+// SECURITY LOCK CONFIGURATION
+// =====================================
+
+// NEW: Count incorrect PIN attempts
+int failedAttempts = 0;
+
+// NEW: Maximum incorrect attempts
+const int maxAttempts = 3;
+
+// NEW: Lock duration = 30 seconds
+const unsigned long lockDuration = 30000UL;
+
+// NEW: Lock status and starting time
+bool systemLocked = false;
+unsigned long lockStartTime = 0;
+
+int lastSecondsShown = -1;
+
+// =====================================
+// CHECK PIN
+// =====================================
+
 bool checkPin(String pin) {
+
   for (int i = 0; i < pinCount; i++) {
+
     if (pin == validPins[i]) {
       return true;
     }
   }
+
   return false;
 }
 
@@ -92,18 +113,18 @@ bool checkPin(String pin) {
 // MOTOR FUNCTIONS
 // =====================================
 
-// Release motor coils
 void releaseMotor(const int pins[4]) {
+
   for (int i = 0; i < 4; i++) {
     digitalWrite(pins[i], LOW);
   }
 }
 
-// Rotate selected motor
 void rotateMotor(
   const int pins[4],
   int &position
 ) {
+
   for (int i = 0; i < stepsToRotate; i++) {
 
     position = (position + 1) % 8;
@@ -119,23 +140,90 @@ void rotateMotor(
 }
 
 // =====================================
-// LCD FUNCTIONS
+// LCD AND RESET FUNCTIONS
 // =====================================
 
 void showWelcome() {
+
   lcd.clear();
   lcd.setCursor(0, 0);
   lcd.print("ENTER 4-DIGIT");
+
   lcd.setCursor(0, 1);
   lcd.print("PIN: ");
 }
 
 void resetMachine() {
+
   enteredPin = "";
   pinVerified = false;
 
   showWelcome();
+
   Serial.println("ENTER 4-DIGIT PIN:");
+}
+
+// =====================================
+// NEW: START SECURITY LOCK
+// =====================================
+
+void startLock() {
+
+  systemLocked = true;
+  pinVerified = false;
+  enteredPin = "";
+
+  lockStartTime = millis();
+  lastSecondsShown = -1;
+
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("SYSTEM LOCKED");
+
+  lcd.setCursor(0, 1);
+  lcd.print("RETRY IN 30 SEC");
+
+  Serial.println("SYSTEM LOCKED FOR 30 SECONDS");
+}
+
+// =====================================
+// NEW: HANDLE SECURITY LOCK
+// =====================================
+
+void handleLock() {
+
+  unsigned long elapsed = millis() - lockStartTime;
+
+  // Check whether 30 seconds have passed
+  if (elapsed >= lockDuration) {
+
+    systemLocked = false;
+    failedAttempts = 0;
+    lastSecondsShown = -1;
+
+    Serial.println("SYSTEM UNLOCKED");
+
+    resetMachine();
+    return;
+  }
+
+  // Calculate seconds remaining
+  int secondsLeft =
+      (lockDuration - elapsed + 999UL) / 1000UL;
+
+  // Update display only when seconds change
+  if (secondsLeft != lastSecondsShown) {
+
+    lastSecondsShown = secondsLeft;
+
+    lcd.setCursor(0, 0);
+    lcd.print("SYSTEM LOCKED   ");
+
+    lcd.setCursor(0, 1);
+    lcd.print("RETRY IN ");
+    lcd.print(secondsLeft);
+    lcd.print(" SEC   ");
+  }
 }
 
 // =====================================
@@ -144,9 +232,15 @@ void resetMachine() {
 
 void dispense(int product) {
 
+  // Prevent operation during lockout
+  if (systemLocked || !pinVerified) {
+    return;
+  }
+
   lcd.clear();
   lcd.setCursor(0, 0);
   lcd.print("DISPENSING...");
+
   lcd.setCursor(0, 1);
   lcd.print("PRODUCT ");
   lcd.print(product);
@@ -156,13 +250,14 @@ void dispense(int product) {
 
   if (product == 1) {
 
-    Serial.println("Motor 1 rotating...");
     rotateMotor(motor1Pins, position1);
 
   } else if (product == 2) {
 
-    Serial.println("Motor 2 rotating...");
     rotateMotor(motor2Pins, position2);
+
+  } else {
+    return;
   }
 
   Serial.println("Motor cycle completed.");
@@ -170,6 +265,7 @@ void dispense(int product) {
   lcd.clear();
   lcd.setCursor(0, 0);
   lcd.print("MOTOR FINISHED");
+
   lcd.setCursor(0, 1);
   lcd.print("COLLECT ITEM");
 
@@ -186,14 +282,13 @@ void setup() {
 
   Serial.begin(115200);
 
-  // LCD initialization
   Wire.begin(SDA_PIN, SCL_PIN);
 
   lcd.init();
   lcd.backlight();
 
-  // Initialize both motors
   for (int i = 0; i < 4; i++) {
+
     pinMode(motor1Pins[i], OUTPUT);
     pinMode(motor2Pins[i], OUTPUT);
   }
@@ -210,22 +305,35 @@ void setup() {
 
 void loop() {
 
+  // NEW: Security lock has first priority
+  if (systemLocked) {
+
+    handleLock();
+    return;
+  }
+
   char key = keypad.getKey();
 
   if (!key) return;
 
-  // * = Reset / Logout
+  // Clear entered PIN or logout
+  // Does not reset the failed-attempt count
   if (key == '*') {
+
     resetMachine();
     return;
   }
 
-  // Authentication stage
+  // ===================================
+  // AUTHENTICATION
+  // ===================================
+
   if (!pinVerified) {
 
     if (key >= '0' && key <= '9') {
 
       if (enteredPin.length() < 4) {
+
         enteredPin += key;
 
         lcd.print("*");
@@ -240,35 +348,58 @@ void loop() {
       if (enteredPin.length() == 4 &&
           checkPin(enteredPin)) {
 
+        // Successful authentication
         pinVerified = true;
         enteredPin = "";
+
+        // Reset failed attempts
+        failedAttempts = 0;
 
         lcd.clear();
         lcd.setCursor(0, 0);
         lcd.print("PIN VERIFIED");
+
         lcd.setCursor(0, 1);
         lcd.print("SELECT 1 OR 2");
 
         Serial.println("ACCESS GRANTED");
-        Serial.println("Select Product 1 or 2");
 
       } else {
 
-        lcd.clear();
-        lcd.setCursor(0, 0);
-        lcd.print("INVALID PIN");
-        lcd.setCursor(0, 1);
-        lcd.print("TRY AGAIN");
+        // Wrong PIN
+        failedAttempts++;
 
-        Serial.println("INVALID PIN");
+        Serial.print("Failed Attempts: ");
+        Serial.println(failedAttempts);
 
-        delay(1500);
-        resetMachine();
+        // Lock after 3 incorrect attempts
+        if (failedAttempts >= maxAttempts) {
+
+          startLock();
+
+        } else {
+
+          lcd.clear();
+          lcd.setCursor(0, 0);
+          lcd.print("WRONG PIN");
+
+          lcd.setCursor(0, 1);
+          lcd.print("ATTEMPT ");
+          lcd.print(failedAttempts);
+          lcd.print(" OF 3");
+
+          delay(1500);
+
+          resetMachine();
+        }
       }
     }
   }
 
-  // After successful authentication
+  // ===================================
+  // PRODUCT SELECTION
+  // ===================================
+
   else {
 
     if (key == '1') {
@@ -278,7 +409,6 @@ void loop() {
     } else if (key == '2') {
 
       dispense(2);
-
     }
   }
 }
