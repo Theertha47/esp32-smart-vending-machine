@@ -1,5 +1,14 @@
 
+#include <Arduino.h>
+#include <Wire.h>
 #include <Keypad.h>
+#include <LiquidCrystal_I2C.h>
+
+// LCD configuration
+#define SDA_PIN 22
+#define SCL_PIN 21
+
+LiquidCrystal_I2C lcd(0x27, 16, 2);
 
 // 4x4 Keypad
 const byte ROWS = 4;
@@ -43,21 +52,36 @@ bool checkPin(String pin) {
   return false;
 }
 
+// Display PIN entry screen
+void showWelcome() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("ENTER 4-DIGIT");
+  lcd.setCursor(0, 1);
+  lcd.print("PIN: ");
+}
+
 // Reset authentication
 void resetMachine() {
   enteredPin = "";
   pinVerified = false;
 
+  showWelcome();
   Serial.println("ENTER 4-DIGIT PIN:");
 }
 
-// Setup
 void setup() {
   Serial.begin(115200);
+
+  // Initialize I2C LCD
+  Wire.begin(SDA_PIN, SCL_PIN);
+
+  lcd.init();
+  lcd.backlight();
+
   resetMachine();
 }
 
-// Main loop
 void loop() {
   char key = keypad.getKey();
 
@@ -71,15 +95,19 @@ void loop() {
 
   if (!pinVerified) {
 
-    // Accept numeric keys
+    // Read numeric keys
     if (key >= '0' && key <= '9') {
       if (enteredPin.length() < 4) {
         enteredPin += key;
+
+        // Hide PIN digits on LCD
+        lcd.print("*");
+
         Serial.print("*");
       }
     }
 
-    // # = Verify PIN
+    // # = Submit PIN
     else if (key == '#') {
       Serial.println();
 
@@ -87,11 +115,25 @@ void loop() {
           checkPin(enteredPin)) {
 
         pinVerified = true;
-        Serial.println("PIN VERIFIED");
+
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("PIN VERIFIED");
+        lcd.setCursor(0, 1);
+        lcd.print("ACCESS GRANTED");
+
         Serial.println("ACCESS GRANTED");
 
       } else {
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("INVALID PIN");
+        lcd.setCursor(0, 1);
+        lcd.print("TRY AGAIN");
+
         Serial.println("INVALID PIN");
+
+        delay(1500);
         resetMachine();
       }
     }
